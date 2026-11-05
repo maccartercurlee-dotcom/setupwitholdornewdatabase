@@ -150,14 +150,121 @@ if IS_UPDATE == 0:
 conn.commit(); conn.close()
 PYEOF
 
-echo -e "${YELLOW}[5/5] Настройка Nginx...${NC}"
+echo -e "${YELLOW}[5/5] Настройка Nginx и создание заглушек...${NC}"
 WEB_PATH=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webBasePath';")
 SUB_PATH=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='subPath';")
 WEB_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webPort';")
 SUB_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='subPort';")
 
+# Создаем красивую заглушку для главного домена
 mkdir -p /var/www/decoy
-echo "<h1>Private Instance</h1>" > /var/www/decoy/index.html
+cat > /var/www/decoy/index.html << 'HTML'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Private Server</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1c1c22;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#24242c;border:1px solid #333340;border-radius:12px;padding:40px 36px;width:100%;max-width:400px;color:#e6e6ee}
+.icon{text-align:center;font-size:32px;margin-bottom:14px;opacity:.85}
+h1{font-size:18px;font-weight:600;text-align:center;margin-bottom:6px}
+.sub{text-align:center;color:#8a8a98;font-size:13px;margin-bottom:28px}
+label{display:block;font-size:12px;color:#a0a0ac;margin-bottom:6px;letter-spacing:.3px}
+input{width:100%;padding:11px 13px;background:#1a1a20;border:1px solid #333340;border-radius:6px;color:#e6e6ee;font-size:14px;margin-bottom:14px;outline:none}
+input:focus{border-color:#5a8f7a}
+button{width:100%;padding:12px;background:#5a8f7a;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-top:4px}
+button:disabled{opacity:.6;cursor:not-allowed}
+.err{color:#ff7a7a;background:rgba(255,122,122,.08);border:1px solid rgba(255,122,122,.25);border-radius:6px;padding:10px;font-size:12px;margin-top:14px;display:none;line-height:1.5}
+.foot{margin-top:22px;text-align:center;font-size:11px;color:#5a5a68}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🔒</div>
+  <h1>Вход в систему</h1>
+  <div class="sub">Private instance · authorized access only</div>
+  <form id="f">
+    <label>Логин</label><input type="text" required>
+    <label>Пароль</label><input type="password" required>
+    <button type="submit" id="b">Войти</button>
+    <div id="e" class="err"></div>
+  </form>
+  <div class="foot">self-hosted · private use</div>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit',function(ev){
+  ev.preventDefault();
+  var b=document.getElementById('b'),e=document.getElementById('e');
+  b.disabled=true;b.innerText='Проверка...';e.style.display='none';
+  setTimeout(function(){
+    b.disabled=false;b.innerText='Войти';
+    e.style.display='block';
+    e.innerText='Не удалось войти: сервис авторизации недоступен. Попробуйте позже.';
+  },1500);
+});
+</script>
+</body>
+</html>
+HTML
+
+# Создаем заглушки для субдоменов
+for s in $SUBDOMAINS; do
+    mkdir -p /var/www/$s
+    cat > /var/www/$s/index.html << HTML
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Workspace</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#1c1c22;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.card{background:#24242c;border:1px solid #333340;border-radius:12px;padding:40px 36px;width:100%;max-width:400px;color:#e6e6ee}
+.icon{text-align:center;font-size:32px;margin-bottom:14px;opacity:.85}
+h1{font-size:18px;font-weight:600;text-align:center;margin-bottom:6px}
+.sub{text-align:center;color:#8a8a98;font-size:13px;margin-bottom:28px}
+label{display:block;font-size:12px;color:#a0a0ac;margin-bottom:6px;letter-spacing:.3px}
+input{width:100%;padding:11px 13px;background:#1a1a20;border:1px solid #333340;border-radius:6px;color:#e6e6ee;font-size:14px;margin-bottom:14px;outline:none}
+input:focus{border-color:#5a8f7a}
+button{width:100%;padding:12px;background:#5a8f7a;color:#fff;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-top:4px}
+button:disabled{opacity:.6;cursor:not-allowed}
+.err{color:#ff7a7a;background:rgba(255,122,122,.08);border:1px solid rgba(255,122,122,.25);border-radius:6px;padding:10px;font-size:12px;margin-top:14px;display:none;line-height:1.5}
+.foot{margin-top:22px;text-align:center;font-size:11px;color:#5a5a68}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🧠</div>
+  <h1>AI Workspace</h1>
+  <div class="sub">Access to ${s}.${DOMAIN}</div>
+  <form id="f">
+    <label>API Key / Логин</label><input type="text" required>
+    <label>Пароль</label><input type="password" required>
+    <button type="submit" id="b">Sign In</button>
+    <div id="e" class="err"></div>
+  </form>
+  <div class="foot">secure gateway · authorized only</div>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit',function(ev){
+  ev.preventDefault();
+  var b=document.getElementById('b'),e=document.getElementById('e');
+  b.disabled=true;b.innerText='Авторизация...';e.style.display='none';
+  setTimeout(function(){
+    b.disabled=false;b.innerText='Sign In';
+    e.style.display='block';
+    e.innerText='Ошибка авторизации: неверный ключ доступа или сервис временно недоступен.';
+  },1200);
+});
+</script>
+</body>
+</html>
+HTML
+done
 
 NGINX_CONF="server {
     listen 80; server_name $ALL_CERT_DOMAINS;
@@ -175,8 +282,6 @@ server {
 }"
 
 for s in $SUBDOMAINS; do
-    mkdir -p /var/www/$s
-    echo "<h1>AI Workspace ($s)</h1>" > /var/www/$s/index.html
     NGINX_CONF="$NGINX_CONF
 server {
     listen 127.0.0.1:$NGINX_PORT ssl http2;
