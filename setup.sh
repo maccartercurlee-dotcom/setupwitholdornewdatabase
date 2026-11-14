@@ -138,10 +138,95 @@ if IS_UPDATE == 0:
     pub=[l.split()[-1] for l in k.split('\n') if 'Password' in l or 'Public' in l][0]
     
     vless_clients = [{"id":u,"email":e,"subId":s,"enable":True} for i,e,s,u in clients]
+    
+    # ВАШ НОВЫЙ JSON
     vless_stream = {
-        "network": "xhttp", "security": "reality",
-        "realitySettings": {"target": f"127.0.0.1:{NGINX_PORT}", "serverNames": ALL_NAMES, "privateKey": pk, "shortIds": [secrets.token_hex(4)], "settings": {"publicKey": pub, "fingerprint": "chrome", "spiderX": "/"}}
+        "network": "xhttp",
+        "xhttpSettings": {
+            "path": "/api/v1/ws",
+            "host": "",
+            "mode": "stream-one",
+            "xPaddingBytes": "10-100",
+            "xPaddingObfsMode": True,
+            "xPaddingKey": "",
+            "xPaddingHeader": "",
+            "xPaddingPlacement": "cookie",
+            "xPaddingMethod": "repeat-x",
+            "sessionIDPlacement": "",
+            "sessionIDKey": "",
+            "sessionIDTable": "Base62",
+            "sessionIDLength": "8-16",
+            "seqPlacement": "",
+            "seqKey": "",
+            "uplinkDataPlacement": "",
+            "uplinkDataKey": "",
+            "scMaxEachPostBytes": "",
+            "noSSEHeader": False,
+            "scMaxBufferedPosts": 30,
+            "scStreamUpServerSecs": "20-80",
+            "serverMaxHeaderBytes": 0,
+            "uplinkHTTPMethod": "POST",
+            "headers": {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept": "text/event-stream"
+            },
+            "scMinPostsIntervalMs": "",
+            "uplinkChunkSize": 0,
+            "noGRPCHeader": False,
+            "xmux": {
+                "maxConcurrency": "16-32",
+                "maxConnections": 0,
+                "cMaxReuseTimes": 0,
+                "hMaxRequestTimes": "600-900",
+                "hMaxReusableSecs": "1800-3000",
+                "hKeepAlivePeriod": 0
+            },
+            "enableXmux": True
+        },
+        "security": "reality",
+        "realitySettings": {
+            "show": False,
+            "xver": 0,
+            "target": f"127.0.0.1:{NGINX_PORT}",
+            "serverNames": ALL_NAMES,
+            "privateKey": pk,
+            "minClientVer": "",
+            "maxClientVer": "",
+            "maxTimediff": 0,
+            "shortIds": [secrets.token_hex(4), secrets.token_hex(8)],
+            "mldsa65Seed": "",
+            "settings": {
+                "publicKey": pub,
+                "fingerprint": "firefox",
+                "serverName": "",
+                "spiderX": "/",
+                "mldsa65Verify": ""
+            }
+        },
+        "sockopt": {
+            "tcpFastOpen": True,
+            "tcpcongestion": "bbr",
+            "acceptProxyProtocol": False,
+            "mark": 0,
+            "tproxy": "off",
+            "tcpMptcp": False,
+            "penetrate": False,
+            "domainStrategy": "AsIs",
+            "tcpMaxSeg": 0,
+            "dialerProxy": "",
+            "tcpKeepAliveInterval": 0,
+            "tcpKeepAliveIdle": 0,
+            "tcpUserTimeout": 0,
+            "V6Only": False,
+            "tcpWindowClamp": 0,
+            "interface": "",
+            "trustedXForwardedFor": [],
+            "addressPortStrategy": "none",
+            "customSockopt": []
+        }
     }
+    
     c.execute("INSERT INTO inbounds (user_id,remark,port,protocol,settings,stream_settings,enable) VALUES (1,'VLESS-AI',443,'vless',?,?,1)",(json.dumps({"clients":vless_clients,"decryption":"none"}), json.dumps(vless_stream)))
 
     hy_clients = [{"id":u,"email":e,"subId":s,"auth":u,"enable":True} for i,e,s,u in clients]
