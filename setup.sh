@@ -64,7 +64,7 @@ systemctl restart nginx
 
 CERTBOT_ARGS=""
 for d in $ALL_CERT_DOMAINS; do CERTBOT_ARGS="$CERTBOT_ARGS -d $d"; done
-certbot certonly --webroot -w /var/www/certbot $CERTBOT_ARGS --expand --non-interactive --agree-tos -m "admin@$DOMAIN" --deploy-hook "systemctl reload nginx"
+certbot certonly --webroot -w /var/www/certbot $CERTBOT_ARGS --expand --non-interactive --agree-tos -m "admin@$DOMAIN" --deploy-hook "systemctl reload nginx" || true
 
 if [ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ] && [ ! -f "/etc/letsencrypt/live/$DOMAIN-0001/fullchain.pem" ]; then
     echo -e "${RED}ОШИБКА! Сертификат не выпущен. Проверьте DNS.${NC}"
@@ -111,6 +111,37 @@ c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('subDomain', ?)"
 c.execute("SELECT id, email, sub_id, uuid FROM clients")
 clients = c.fetchall()
 
+# НОВЫЙ JSON ДЛЯ VLESS (используется как для создания, так и для обновления)
+vless_xhttp = {
+    "path": "/api/v1/ws", "host": "", "mode": "stream-one",
+    "xPaddingBytes": "10-100", "xPaddingObfsMode": True, "xPaddingKey": "",
+    "xPaddingHeader": "", "xPaddingPlacement": "cookie", "xPaddingMethod": "repeat-x",
+    "sessionIDPlacement": "", "sessionIDKey": "", "sessionIDTable": "Base62",
+    "sessionIDLength": "8-16", "seqPlacement": "", "seqKey": "",
+    "uplinkDataPlacement": "", "uplinkDataKey": "", "scMaxEachPostBytes": "",
+    "noSSEHeader": False, "scMaxBufferedPosts": 30, "scStreamUpServerSecs": "20-80",
+    "serverMaxHeaderBytes": 0, "uplinkHTTPMethod": "POST",
+    "headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept": "text/event-stream"
+    },
+    "scMinPostsIntervalMs": "", "uplinkChunkSize": 0, "noGRPCHeader": False,
+    "xmux": {
+        "maxConcurrency": "16-32", "maxConnections": 0, "cMaxReuseTimes": 0,
+        "hMaxRequestTimes": "600-900", "hMaxReusableSecs": "1800-3000", "hKeepAlivePeriod": 0
+    },
+    "enableXmux": True
+}
+vless_sockopt = {
+    "tcpFastOpen": True, "tcpcongestion": "bbr", "acceptProxyProtocol": False,
+    "mark": 0, "tproxy": "off", "tcpMptcp": False, "penetrate": False,
+    "domainStrategy": "AsIs", "tcpMaxSeg": 0, "dialerProxy": "",
+    "tcpKeepAliveInterval": 0, "tcpKeepAliveIdle": 0, "tcpUserTimeout": 0,
+    "V6Only": False, "tcpWindowClamp": 0, "interface": "",
+    "trustedXForwardedFor": [], "addressPortStrategy": "none", "customSockopt": []
+}
+
 c.execute("SELECT id, protocol, stream_settings FROM inbounds")
 for iid, proto, stream_str in c.fetchall():
     if not stream_str: continue
@@ -119,114 +150,58 @@ for iid, proto, stream_str in c.fetchall():
     
     if proto == 'vless':
         if 'realitySettings' not in stream: stream['realitySettings'] = {}
+        
+        if IS_UPDATE == 1:
+            # В режиме обновления сохраняем старые ключи, но меняем транспорт на xhttp
+            old_priv = stream['realitySettings'].get('privateKey')
+            old_pub = stream['realitySettings'].get('settings', {}).get('publicKey')
+            old_short = stream['realitySettings'].get('shortIds')
+            old_spider = stream['realitySettings'].get('settings', {}).get('spiderX')
+            
+            stream['network'] = "xhttp"
+            stream['xhttpSettings'] = vless_xhttp
+            stream['sockopt'] = vless_sockopt
+            
+            if old_priv: stream['realitySettings']['privateKey'] = old_priv
+            if old_pub: stream['realitySettings']['settings']['publicKey'] = old_pub
+            if old_short: stream['realitySettings']['shortIds'] = old_short
+            if old_spider: stream['realitySettings']['settings']['spiderX'] = old_spider
+        
         stream['realitySettings']['serverNames'] = ALL_NAMES
         stream['realitySettings']['target'] = f"127.0.0.1:{NGINX_PORT}"
+        c.execute("UPDATE inbounds SET stream_settings=? WHERE id=?", (json.dumps(stream), iid))
+
     elif proto == 'hysteria':
         if 'tlsSettings' not in stream: stream['tlsSettings'] = {}
         stream['tlsSettings']['serverName'] = HY_DOMAIN
         stream['tlsSettings']['certificates'] = [{"certificateFile": CERT_PATH, "keyFile": KEY_PATH, "useFile": True}]
+        c.execute("UPDATE inbounds SET stream_settings=? WHERE id=?", (json.dumps(stream), iid))
     elif proto == 'masque':
         if 'tlsSettings' not in stream: stream['tlsSettings'] = {}
         stream['tlsSettings']['serverName'] = MS_DOMAIN
         stream['tlsSettings']['certificates'] = [{"certificateFile": CERT_PATH, "keyFile": KEY_PATH, "useFile": True}]
-    c.execute("UPDATE inbounds SET stream_settings=? WHERE id=?", (json.dumps(stream), iid))
+        c.execute("UPDATE inbounds SET stream_settings=? WHERE id=?", (json.dumps(stream), iid))
 
 if IS_UPDATE == 0:
     xb=subprocess.check_output("find /usr/local/x-ui/bin/ -name 'xray*' -type f | head -n 1",shell=True).decode().strip()
     k=subprocess.check_output(f"{xb} x25519",shell=True).decode()
     pk=[l.split()[-1] for l in k.split('\n') if 'Private' in l][0]
     pub=[l.split()[-1] for l in k.split('\n') if 'Password' in l or 'Public' in l][0]
+    spider="/"+secrets.token_urlsafe(10)[:15]
     
     vless_clients = [{"id":u,"email":e,"subId":s,"enable":True} for i,e,s,u in clients]
     
-    # ВАШ НОВЫЙ JSON
     vless_stream = {
-        "network": "xhttp",
-        "xhttpSettings": {
-            "path": "/api/v1/ws",
-            "host": "",
-            "mode": "stream-one",
-            "xPaddingBytes": "10-100",
-            "xPaddingObfsMode": True,
-            "xPaddingKey": "",
-            "xPaddingHeader": "",
-            "xPaddingPlacement": "cookie",
-            "xPaddingMethod": "repeat-x",
-            "sessionIDPlacement": "",
-            "sessionIDKey": "",
-            "sessionIDTable": "Base62",
-            "sessionIDLength": "8-16",
-            "seqPlacement": "",
-            "seqKey": "",
-            "uplinkDataPlacement": "",
-            "uplinkDataKey": "",
-            "scMaxEachPostBytes": "",
-            "noSSEHeader": False,
-            "scMaxBufferedPosts": 30,
-            "scStreamUpServerSecs": "20-80",
-            "serverMaxHeaderBytes": 0,
-            "uplinkHTTPMethod": "POST",
-            "headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept": "text/event-stream"
-            },
-            "scMinPostsIntervalMs": "",
-            "uplinkChunkSize": 0,
-            "noGRPCHeader": False,
-            "xmux": {
-                "maxConcurrency": "16-32",
-                "maxConnections": 0,
-                "cMaxReuseTimes": 0,
-                "hMaxRequestTimes": "600-900",
-                "hMaxReusableSecs": "1800-3000",
-                "hKeepAlivePeriod": 0
-            },
-            "enableXmux": True
-        },
+        "network": "xhttp", "xhttpSettings": vless_xhttp, "sockopt": vless_sockopt,
         "security": "reality",
         "realitySettings": {
-            "show": False,
-            "xver": 0,
-            "target": f"127.0.0.1:{NGINX_PORT}",
-            "serverNames": ALL_NAMES,
-            "privateKey": pk,
-            "minClientVer": "",
-            "maxClientVer": "",
-            "maxTimediff": 0,
-            "shortIds": [secrets.token_hex(4), secrets.token_hex(8)],
-            "mldsa65Seed": "",
-            "settings": {
-                "publicKey": pub,
-                "fingerprint": "firefox",
-                "serverName": "",
-                "spiderX": "/",
-                "mldsa65Verify": ""
-            }
-        },
-        "sockopt": {
-            "tcpFastOpen": True,
-            "tcpcongestion": "bbr",
-            "acceptProxyProtocol": False,
-            "mark": 0,
-            "tproxy": "off",
-            "tcpMptcp": False,
-            "penetrate": False,
-            "domainStrategy": "AsIs",
-            "tcpMaxSeg": 0,
-            "dialerProxy": "",
-            "tcpKeepAliveInterval": 0,
-            "tcpKeepAliveIdle": 0,
-            "tcpUserTimeout": 0,
-            "V6Only": False,
-            "tcpWindowClamp": 0,
-            "interface": "",
-            "trustedXForwardedFor": [],
-            "addressPortStrategy": "none",
-            "customSockopt": []
+            "show": False, "xver": 0, "target": f"127.0.0.1:{NGINX_PORT}",
+            "serverNames": ALL_NAMES, "privateKey": pk,
+            "minClientVer": "", "maxClientVer": "", "maxTimediff": 0,
+            "shortIds": [secrets.token_hex(4), secrets.token_hex(8)], "mldsa65Seed": "",
+            "settings": {"publicKey": pub, "fingerprint": "firefox", "serverName": "", "spiderX": spider, "mldsa65Verify": ""}
         }
     }
-    
     c.execute("INSERT INTO inbounds (user_id,remark,port,protocol,settings,stream_settings,enable) VALUES (1,'VLESS-AI',443,'vless',?,?,1)",(json.dumps({"clients":vless_clients,"decryption":"none"}), json.dumps(vless_stream)))
 
     hy_clients = [{"id":u,"email":e,"subId":s,"auth":u,"enable":True} for i,e,s,u in clients]
@@ -242,7 +217,6 @@ SUB_PATH=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='subP
 WEB_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='webPort';")
 SUB_PORT=$(sqlite3 /etc/x-ui/x-ui.db "SELECT value FROM settings WHERE key='subPort';")
 
-# Создаем красивую заглушку для главного домена
 mkdir -p /var/www/decoy
 cat > /var/www/decoy/index.html << 'HTML'
 <!DOCTYPE html>
@@ -296,7 +270,6 @@ document.getElementById('f').addEventListener('submit',function(ev){
 </html>
 HTML
 
-# Создаем заглушки для субдоменов
 for s in $SUBDOMAINS; do
     mkdir -p /var/www/$s
     cat > /var/www/$s/index.html << HTML
@@ -385,6 +358,7 @@ server {
     # --- ИСПРАВЛЕНИЕ ДЛЯ REALITY ---
     ssl_protocols TLSv1.3;
     ssl_ecdh_curve X25519;
+    ssl_conf_command Ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256;
     # -------------------------------
 
     location / { root /var/www/$s; index index.html; }
@@ -406,6 +380,7 @@ if nginx -t; then
     echo -e "${GREEN}Nginx и Xray успешно перезапущены!${NC}"
 else
     echo -e "${RED}ОШИБКА В КОНФИГЕ NGINX!${NC}"
+    exit 1
 fi
 
 echo -e "${GREEN}=== ГОТОВО ===${NC}"
