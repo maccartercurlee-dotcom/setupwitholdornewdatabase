@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 clear
 echo -e "${GREEN}=== УНИВЕРСАЛЬНЫЙ УСТАНОВЩИК VPN (БЕЗОПАСНЫЙ) ===${NC}"
@@ -276,6 +277,13 @@ server {
     server_name $DOMAIN;
     ssl_certificate $CERT_PATH;
     ssl_certificate_key $KEY_PATH;
+    
+    # --- ИСПРАВЛЕНИЕ ДЛЯ REALITY ---
+    ssl_protocols TLSv1.3;
+    ssl_ecdh_curve X25519;
+    ssl_conf_command Ciphersuites TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256;
+    # -------------------------------
+
     location / { root /var/www/decoy; index index.html; }
     location $WEB_PATH { proxy_pass http://127.0.0.1:$WEB_PORT; proxy_set_header Host \$host; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection \"upgrade\"; }
     location $SUB_PATH { proxy_pass http://127.0.0.1:$SUB_PORT; proxy_set_header Host \$host; }
@@ -288,6 +296,12 @@ server {
     server_name $s.$DOMAIN;
     ssl_certificate $CERT_PATH;
     ssl_certificate_key $KEY_PATH;
+    
+    # --- ИСПРАВЛЕНИЕ ДЛЯ REALITY ---
+    ssl_protocols TLSv1.3;
+    ssl_ecdh_curve X25519;
+    # -------------------------------
+
     location / { root /var/www/$s; index index.html; }
 }"
 done
